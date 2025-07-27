@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+
 import '../services/validator_service.dart';
 
 class ValidatorControls extends StatelessWidget {
@@ -48,6 +49,7 @@ class ValidatorControls extends StatelessWidget {
               ),
 
               const SizedBox(height: 16),
+
 
               // Control Buttons
               Row(

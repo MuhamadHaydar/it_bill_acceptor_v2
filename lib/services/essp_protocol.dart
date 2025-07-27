@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+
 import '../models/ssp_command.dart';
 import '../utils/commands.dart';
 import 'encyption_service.dart';
@@ -13,8 +14,15 @@ class ESSPProtocol {
 
   bool sendCommand(SSPCommand command, SSPCommandInfo info) {
     try {
+      _addLog(
+        '📤 Sending command: ${command.commandData[0].toRadixString(16).padLeft(2, '0')}',
+      );
+
       // Build packet
       final packet = _buildPacket(command);
+      _addLog(
+        '📦 Built packet (${packet.length} bytes): ${packet.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ')}',
+      );
 
       // Log transmitted data
       info.transmittedData.setRange(0, packet.length, packet);
@@ -23,24 +31,51 @@ class ESSPProtocol {
 
       // Send packet
       if (!_serialService.writeData(packet)) {
+        _addLog('❌ Failed to write packet to serial port');
+        return false;
+      }
+      _addLog('✅ Packet sent successfully');
+
+      // Read response with timeout
+      _addLog('📥 Waiting for response...');
+      final response = _readResponse();
+      if (response == null) {
+        _addLog('❌ No response received from device');
         return false;
       }
 
-      // Read response
-      final response = _readResponse();
-      if (response == null) {
-        return false;
-      }
+      _addLog(
+        '📥 Received response (${response.length} bytes): ${response.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ')}',
+      );
 
       // Log received data
       info.receivedData.setRange(0, response.length, response);
       info.receivedLength = response.length;
 
       // Parse response
-      return _parseResponse(response, command);
+      final parseResult = _parseResponse(response, command);
+      if (parseResult) {
+        _addLog('✅ Response parsed successfully');
+        if (command.responseDataLength > 0) {
+          _addLog(
+            '📋 Response data: ${command.responseData.take(command.responseDataLength).map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ')}',
+          );
+        }
+      } else {
+        _addLog('❌ Failed to parse response');
+      }
+
+      return parseResult;
     } catch (e) {
+      _addLog('💥 sendCommand exception: $e');
       return false;
     }
+  }
+
+  // Add a method to add logs from protocol (you'll need to pass the validator service reference)
+  void _addLog(String message) {
+    print('ESSP: $message'); // Console output
+    // If you have access to ValidatorService, also call its _addLog method
   }
 
   Uint8List _buildPacket(SSPCommand command) {
@@ -64,8 +99,14 @@ class ESSPProtocol {
     // Encrypt data if encryption is enabled
     if (_encryptionEnabled && _keys != null && command.commandDataLength > 0) {
       final dataToEncrypt = Uint8List.sublistView(
-          command.commandData, 0, command.commandDataLength);
-      final encryptedData = EncryptionService.encryptData(dataToEncrypt, _keys!);
+        command.commandData,
+        0,
+        command.commandDataLength,
+      );
+      final encryptedData = EncryptionService.encryptData(
+        dataToEncrypt,
+        _keys!,
+      );
 
       for (int i = 0; i < encryptedData.length; i++) {
         packet[3 + i] = encryptedData[i];
@@ -108,8 +149,15 @@ class ESSPProtocol {
 
     // Decrypt if needed
     if (_encryptionEnabled && _keys != null && length > 0) {
-      final encryptedData = Uint8List.sublistView(command.responseData, 0, length);
-      final decryptedData = EncryptionService.decryptData(encryptedData, _keys!);
+      final encryptedData = Uint8List.sublistView(
+        command.responseData,
+        0,
+        length,
+      );
+      final decryptedData = EncryptionService.decryptData(
+        encryptedData,
+        _keys!,
+      );
 
       for (int i = 0; i < decryptedData.length; i++) {
         command.responseData[i] = decryptedData[i];

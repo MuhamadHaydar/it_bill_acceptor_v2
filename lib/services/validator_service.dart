@@ -1,12 +1,13 @@
-import 'package:flutter/foundation.dart';
 import 'dart:async';
-import 'dart:typed_data';
-import '../models/ssp_command.dart';
+
+import 'package:flutter/foundation.dart';
+
 import '../models/channel_data.dart';
+import '../models/ssp_command.dart';
 import '../utils/commands.dart';
 import '../utils/helpers.dart';
-import 'serial_service.dart';
 import 'essp_protocol.dart';
+import 'serial_service.dart';
 
 class ValidatorService extends ChangeNotifier {
   final SerialService _serialService = SerialService();
@@ -66,15 +67,27 @@ class ValidatorService extends ChangeNotifier {
 
   Future<bool> connect(String portName, int sspAddress) async {
     try {
-      _addLog('Attempting to connect to $portName...');
+      _addLog('=== Starting Connection Process ===');
+      _addLog(
+          'Attempting to connect to $portName with SSP address $sspAddress...');
 
       if (!_serialService.openPort(portName)) {
-        _addLog('Failed to open COM port $portName');
+        _addLog('❌ Failed to open COM port $portName');
         return false;
       }
+      _addLog('✅ Successfully opened COM port $portName');
 
       _currentPort = portName;
       _sspAddress = sspAddress;
+
+      // Test basic serial communication first
+      _addLog('Testing basic serial communication...');
+      if (!_testSerialCommunication()) {
+        _addLog('❌ Basic serial communication test failed');
+        disconnect();
+        return false;
+      }
+      _addLog('✅ Basic serial communication working');
 
       // Negotiate encryption keys
       final command = SSPCommand();
@@ -82,35 +95,64 @@ class ValidatorService extends ChangeNotifier {
       command.sspAddress = sspAddress;
       command.timeout = 3000;
 
+      _addLog('--- Starting Encryption Negotiation ---');
       _protocol.disableEncryption();
 
       if (!_protocol.negotiateKeys(command)) {
-        _addLog('Failed to negotiate encryption keys');
+        _addLog('❌ Failed to negotiate encryption keys');
         disconnect();
         return false;
       }
+      _addLog('✅ Encryption keys negotiated successfully');
 
       _protocol.enableEncryption();
       command.encryptionStatus = true;
 
       // Get device information
+      _addLog('--- Starting Device Setup ---');
       if (!await _setupDevice(command)) {
-        _addLog('Failed to setup device');
+        _addLog('❌ Failed to setup device');
         disconnect();
         return false;
       }
+      _addLog('✅ Device setup completed successfully');
 
       _isConnected = true;
-      _addLog('Successfully connected to validator');
+      _addLog('🎉 Successfully connected to validator');
       notifyListeners();
       return true;
     } catch (e) {
-      _addLog('Connection error: $e');
+      _addLog('💥 Connection error: $e');
       disconnect();
       return false;
     }
   }
 
+// Add this new method to test basic serial communication
+  bool _testSerialCommunication() {
+    try {
+      // Send a simple test byte
+      final testData = Uint8List.fromList([0x7F]); // STX byte
+      if (!_serialService.writeData(testData)) {
+        _addLog('Failed to write test data to serial port');
+        return false;
+      }
+
+      // Try to read any response (even if it's an error)
+      final response = _serialService.readData(10);
+      if (response != null) {
+        _addLog('Received response from serial port: ${response.map((b) =>
+            b.toRadixString(16).padLeft(2, '0')).join(' ')}');
+      } else {
+        _addLog('No response from serial port (this might be normal)');
+      }
+
+      return true; // Port is responding at serial level
+    } catch (e) {
+      _addLog('Serial communication test error: $e');
+      return false;
+    }
+  }
   Future<bool> _setupDevice(SSPCommand command) async {
     try {
       // Find maximum protocol version
